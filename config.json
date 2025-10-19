@@ -1,0 +1,28 @@
+{
+    "scale_min": 0.0,
+    "scale_max": 5.0,
+    "sps": 20000,
+    "channels_expected": 2,
+    "auto_scroll": false,
+    "autoscale_y": false,
+    "volt_unit": "V",
+    "time_unit": "ms",
+    "ch1_visible": true,
+    "ch2_visible": true,
+    "calibration": {
+        "ch1_0": 0.0,
+        "ch1_1023": 5.0,
+        "ch2_0": 0.0,
+        "ch2_1023": 5.0
+    },
+    "xrange": [
+        -183.8009218634104,
+        -60.667688029687525
+    ],
+    "yrange": [
+        -0.5814754651030705,
+        6.943184249338261
+    ],
+    "adc_bits": 10,
+    "probe_10x": false
+}
