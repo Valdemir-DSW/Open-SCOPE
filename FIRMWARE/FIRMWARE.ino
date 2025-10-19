@@ -13,5 +13,5 @@ void loop() {
   Serial.write((uint8_t*)&ch1, 2);
   Serial.write((uint8_t*)&ch2, 2);
 
-  delay(0.50); //20000 Amostras
+  delayMicroseconds(50); //20000 Amostras
 }
