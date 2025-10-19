@@ -7,3 +7,5 @@
 > https://www.tinkercad.com/things/cp1wpyWjvyx-divisor-bagual-ociloscopio?sharecode=gsAXL6Bi_lhPG0hPAqINLiYtJTcSgbRN_5MzYBt9JDI
 
 <img width="738" height="366" alt="image" src="https://github.com/user-attachments/assets/81495f84-50ed-490b-90b9-7f830eb4de16" />
+
+<img width="1366" height="727" alt="image" src="https://github.com/user-attachments/assets/11810c12-6710-42fa-a683-0b560f58261e" />
