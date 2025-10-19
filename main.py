@@ -133,10 +133,10 @@ class SerialReader(QtCore.QThread):
 
 
 class CalibrationDialog(QtWidgets.QDialog):
-    """Diálogo para calibrar mapeamento ADC->Volts por canal, bits, probe 10x e salvar PNG."""
+    """Diálogo para calibrar mapeamento ADC->Volts por canal, bits, probe 10x, biases e salvar PNG."""
     def __init__(self, parent=None, cfg=None):
         super().__init__(parent)
-        self.setWindowTitle("configs")
+        self.setWindowTitle("Configurações / Calibração")
         self.setModal(True)
         layout = QtWidgets.QFormLayout(self)
 
@@ -148,6 +148,8 @@ class CalibrationDialog(QtWidgets.QDialog):
         ch2_fs = c.get("ch2_1023", 5.0)
         bits = cfg.get("adc_bits", 10)
         probe10x = cfg.get("probe_10x", False)
+        time_bias = cfg.get("time_bias", 6.0)
+        freq_bias = cfg.get("freq_bias", 6.0)
 
         self.ch1_0_box = QtWidgets.QDoubleSpinBox()
         self.ch1_0_box.setRange(-1e6, 1e6)
@@ -176,19 +178,33 @@ class CalibrationDialog(QtWidgets.QDialog):
         self.probe10x_box = QtWidgets.QCheckBox("Ponta 10x (ativa na GUI)")
         self.probe10x_box.setChecked(bool(probe10x))
 
+        # bias de tempo / frequência
+        self.time_bias_box = QtWidgets.QDoubleSpinBox()
+        self.time_bias_box.setRange(0.0001, 1e6)
+        self.time_bias_box.setDecimals(6)
+        self.time_bias_box.setValue(float(time_bias))
+        self.freq_bias_box = QtWidgets.QDoubleSpinBox()
+        self.freq_bias_box.setRange(0.000001, 1e6)
+        self.freq_bias_box.setDecimals(6)
+        self.freq_bias_box.setValue(float(freq_bias))
+
         layout.addRow("CH1 -> ADC=0 (V):", self.ch1_0_box)
         layout.addRow("CH1 -> ADC=FS (V):", self.ch1_fs_box)
         layout.addRow("CH2 -> ADC=0 (V):", self.ch2_0_box)
         layout.addRow("CH2 -> ADC=FS (V):", self.ch2_fs_box)
         layout.addRow("ADC bits:", self.bits_box)
         layout.addRow(self.probe10x_box)
+        layout.addRow("Bias tempo (multiplicador):", self.time_bias_box)
+        layout.addRow("Bias frequência (divisor):", self.freq_bias_box)
 
-        # botões e salvar PNG rápido + GitHub link
+        # botões e salvar PNG rápido + GitHub link + restaurar padrões
         btns_row = QtWidgets.QHBoxLayout()
         self.btn_save_png = QtWidgets.QPushButton("Salvar PNG do gráfico")
         btns_row.addWidget(self.btn_save_png)
         self.github_btn = QtWidgets.QPushButton("GitHub")
         btns_row.addWidget(self.github_btn)
+        self.btn_restore = QtWidgets.QPushButton("Restaurar padrões")
+        btns_row.addWidget(self.btn_restore)
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         btns_row.addWidget(btns)
         layout.addRow(btns_row)
@@ -197,6 +213,7 @@ class CalibrationDialog(QtWidgets.QDialog):
         btns.rejected.connect(self.reject)
         self.btn_save_png.clicked.connect(self.on_save_png)
         self.github_btn.clicked.connect(self.open_github)
+        self.btn_restore.clicked.connect(self.restore_defaults)
 
     def on_save_png(self):
         p = self.parent()
@@ -206,6 +223,19 @@ class CalibrationDialog(QtWidgets.QDialog):
     def open_github(self):
         QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://github.com/Valdemir-DSW/Open-SCOPE"))
 
+    def restore_defaults(self):
+        try:
+            self.ch1_0_box.setValue(0.0)
+            self.ch1_fs_box.setValue(5.0)
+            self.ch2_0_box.setValue(0.0)
+            self.ch2_fs_box.setValue(5.0)
+            self.bits_box.setCurrentText("10")
+            self.probe10x_box.setChecked(False)
+            self.time_bias_box.setValue(5.0)
+            self.freq_bias_box.setValue(5.0)
+        except Exception:
+            pass
+
     def values(self):
         return {
             "ch1_0": float(self.ch1_0_box.value()),
@@ -213,7 +243,9 @@ class CalibrationDialog(QtWidgets.QDialog):
             "ch2_0": float(self.ch2_0_box.value()),
             "ch2_1023": float(self.ch2_fs_box.value()),
             "adc_bits": int(self.bits_box.currentText()),
-            "probe_10x": bool(self.probe10x_box.isChecked())
+            "probe_10x": bool(self.probe10x_box.isChecked()),
+            "time_bias": float(self.time_bias_box.value()),
+            "freq_bias": float(self.freq_bias_box.value())
         }
 
 
@@ -223,7 +255,6 @@ class Oscilloscope(QtWidgets.QMainWindow):
         self.setWindowTitle("Open Oscilloscope - Osciloscópio 2CH - By Valdemir")
         base = os.path.dirname(__file__)
 
-       
         icon_path = os.path.join(base, "ico.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
@@ -251,6 +282,10 @@ class Oscilloscope(QtWidgets.QMainWindow):
         self.adc_bits = 10
         self.probe_10x = False
 
+        # tempo / frequência bias (padrões)
+        self.time_bias = 5.0
+        self.freq_bias = 5.0
+
         # unidades selecionadas (por padrão)
         self.volt_unit = "V"
         self.time_unit = "ms"
@@ -265,6 +300,7 @@ class Oscilloscope(QtWidgets.QMainWindow):
         # display type: Voltage / RMS / PMPO / Frequency
         self.display_types = ["Voltage", "RMS", "PMPO", "Frequency"]
 
+        # carregar configuração (pode sobrescrever defaults acima)
         self.load_config()
 
         # UI
@@ -532,13 +568,14 @@ class Oscilloscope(QtWidgets.QMainWindow):
 
     # ---------- calibration UI ----------
     def open_calibration(self):
-        cfg = {}
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r') as f:
-                    cfg = json.load(f)
-            except Exception:
-                cfg = {}
+        # passar estado atual para o diálogo (evita inconsistências entre memória e arquivo)
+        cfg = {
+            "calibration": dict(self.calibration),
+            "adc_bits": int(getattr(self, "adc_bits", 10)),
+            "probe_10x": bool(getattr(self, "probe_10x", False)),
+            "time_bias": float(getattr(self, "time_bias", 5.0)),
+            "freq_bias": float(getattr(self, "freq_bias", 5.0))
+        }
         dlg = CalibrationDialog(self, cfg)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             vals = dlg.values()
@@ -548,6 +585,9 @@ class Oscilloscope(QtWidgets.QMainWindow):
             self.calibration["ch2_1023"] = vals["ch2_1023"]
             self.adc_bits = int(vals.get("adc_bits", self.adc_bits))
             self.probe_10x = bool(vals.get("probe_10x", self.probe_10x))
+            # carregar bias de tempo/freq vindos do diálogo
+            self.time_bias = float(vals.get("time_bias", getattr(self, "time_bias", 5.0)))
+            self.freq_bias = float(vals.get("freq_bias", getattr(self, "freq_bias", 5.0)))
             self.save_config()
 
     # ---------- channel visibility ----------
@@ -593,9 +633,9 @@ class Oscilloscope(QtWidgets.QMainWindow):
             if not self.paused:
                 sps = max(1, int(self.sps_box.value()))
                 N = self.buffer_len
-                # X axis in seconds (from -window .. 0)
+                # X axis in seconds (from -window .. 0) — aplicar time_bias
                 t0 = -float(N - 1) / float(sps)
-                x_seconds = np.linspace(t0, 0.0, N)
+                x_seconds = np.linspace(t0, 0.0, N) * float(getattr(self, "time_bias", 1.0))
                 # scale x to selected time unit for display
                 t_unit = self.time_unit_box.currentText()
                 tfactor = TIME_FACTORS.get(t_unit, 1.0)
@@ -615,6 +655,15 @@ class Oscilloscope(QtWidgets.QMainWindow):
         sps = max(1, int(self.sps_box.value()))
         f1 = compute_frequency(self.data1, sps)
         f2 = compute_frequency(self.data2, sps)
+        # aplicar correção de frequência baseada em bias configurado
+        try:
+            fb = float(getattr(self, "freq_bias", 1.0))
+            if fb != 0:
+                f1 = f1 / fb
+                f2 = f2 / fb
+        except Exception:
+            pass
+
         r1 = float(np.sqrt(np.mean(np.square(self.data1)))) if self.data1.size else 0.0
         r2 = float(np.sqrt(np.mean(np.square(self.data2)))) if self.data2.size else 0.0
         p1 = float(np.max(self.data1) - np.min(self.data1)) if self.data1.size else 0.0
@@ -643,7 +692,7 @@ class Oscilloscope(QtWidgets.QMainWindow):
             self.value_label_ch2.setText(f"CH2 Freq: {f2:.2f} Hz")
 
         # scale info under plot: show window in chosen time unit
-        window_s = float(self.buffer_len) / max(1, sps)
+        window_s = float(self.buffer_len) / max(1, sps) * float(getattr(self, "time_bias", 1.0))
         window_display = window_s / tfactor
         self.update_scale_info_label()
 
@@ -652,7 +701,7 @@ class Oscilloscope(QtWidgets.QMainWindow):
         try:
             sps = max(1, int(self.sps_box.value()))
             N = self.buffer_len
-            t0 = -float(N - 1) / float(sps)
+            t0 = -float(N - 1) / float(sps) * float(getattr(self, "time_bias", 1.0))
             t_unit = self.time_unit_box.currentText()
             tfactor = TIME_FACTORS.get(t_unit, 1.0)
             x0 = t0 / tfactor
@@ -725,9 +774,12 @@ class Oscilloscope(QtWidgets.QMainWindow):
                 return
             p1 = float(self.cursor1.value())
             p2 = float(self.cursor2.value())
-            # current X axis is displayed in chosen time unit; convert to seconds
+            # current X axis is displayed in chosen time unit; convert to seconds (incl. time bias)
             t_unit = self.time_unit_box.currentText()
             tfactor = TIME_FACTORS.get(t_unit, 1.0)
+            # displayed X already includes the configured time_bias.
+            # To show Δt consistent with the axis, convert display units back to seconds:
+            # delta_seconds_biased = delta_display * tfactor
             delta_display = abs(p2 - p1)
             delta_seconds = delta_display * tfactor
             # format nicely
@@ -795,7 +847,9 @@ class Oscilloscope(QtWidgets.QMainWindow):
                     "ch2_visible": bool(self.ch2_enable.isChecked()) if hasattr(self, "ch2_enable") else True,
                     "calibration": self.calibration,
                     "adc_bits": int(self.adc_bits),
-                    "probe_10x": bool(self.probe_10x)
+                    "probe_10x": bool(self.probe_10x),
+                    "time_bias": float(getattr(self, "time_bias", 5.0)),
+                    "freq_bias": float(getattr(self, "freq_bias", 5.0))
                 })
                 with open(CONFIG_FILE, 'w') as f:
                     json.dump(cfg, f, indent=4)
@@ -821,7 +875,7 @@ class Oscilloscope(QtWidgets.QMainWindow):
                     sps = max(1, int(self.sps_box.value()))
                     N = self.buffer_len
                     t0 = -float(N - 1) / float(sps)
-                    times = np.linspace(t0, 0.0, N)
+                    times = np.linspace(t0, 0.0, N) * float(getattr(self, "time_bias", 1.0))
                     for t, v1, v2 in zip(times, self.data1, self.data2):
                         writer.writerow([f"{t:.6f}", f"{v1:.6f}", f"{v2:.6f}"])
         except Exception:
@@ -863,6 +917,9 @@ class Oscilloscope(QtWidgets.QMainWindow):
                 self.calibration.update(cfg.get("calibration", {}))
                 self.adc_bits = int(cfg.get("adc_bits", self.adc_bits))
                 self.probe_10x = bool(cfg.get("probe_10x", self.probe_10x))
+                # carregar biases de tempo/frequência se existirem
+                self.time_bias = float(cfg.get("time_bias", getattr(self, "time_bias", 5.0)))
+                self.freq_bias = float(cfg.get("freq_bias", getattr(self, "freq_bias", 5.0)))
             except Exception:
                 pass
         # ensure UI boxes reflect loaded values after init
@@ -904,7 +961,9 @@ class Oscilloscope(QtWidgets.QMainWindow):
                 "ch2_visible": bool(self.ch2_enable.isChecked()) if hasattr(self, "ch2_enable") else True,
                 "calibration": self.calibration,
                 "adc_bits": int(self.adc_bits),
-                "probe_10x": bool(self.probe_10x)
+                "probe_10x": bool(self.probe_10x),
+                "time_bias": float(getattr(self, "time_bias", 5.0)),
+                "freq_bias": float(getattr(self, "freq_bias", 5.0))
             })
             # also save current view ranges
             try:
@@ -927,7 +986,7 @@ class Oscilloscope(QtWidgets.QMainWindow):
             v_unit = self.volt_unit_box.currentText() if hasattr(self, "volt_unit_box") else self.volt_unit
             t_unit = self.time_unit_box.currentText() if hasattr(self, "time_unit_box") else self.time_unit
             dtype = self.display_combo.currentText() if hasattr(self, "display_combo") else "Voltage"
-            window_s = float(self.buffer_len) / max(1, sps)
+            window_s = float(self.buffer_len) / max(1, sps) * float(getattr(self, "time_bias", 1.0))
             # show window in chosen time unit
             tfactor = TIME_FACTORS.get(t_unit, 1.0)
             window_display = window_s / tfactor
