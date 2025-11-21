@@ -6,9 +6,7 @@ import serial
 import serial.tools.list_ports
 from PyQt5 import QtCore, QtWidgets, QtGui
 import pyqtgraph as pg
-import subprocess
 import os
-import threading
 from PyQt5.QtGui import QIcon
 CONFIG_FILE = "config.json"
 
@@ -251,169 +249,6 @@ class CalibrationDialog(QtWidgets.QDialog):
         }
 
 
-class ArduSimWindow(QtWidgets.QMainWindow):
-    """Top-level window para Ardu-Stim simulador de sinais."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Ardu-Stim - Simulador de Sinais Automotivos")
-        # self.setModal(False)  # REMOVER - QMainWindow não tem setModal()
-        self.resize(600, 450)
-        self.ardu_process = None
-        
-        # icon do pai
-        if parent and parent.windowIcon():
-            self.setWindowIcon(parent.windowIcon())
-        
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-        layout = QtWidgets.QVBoxLayout(central)
-        
-        # Título
-        title = QtWidgets.QLabel("Ardu-Stim v1.2.1")
-        title_font = title.font()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        layout.addWidget(title)
-        
-        # Descrição
-        desc = QtWidgets.QLabel(
-            "Simulador de Sinais de Rotação Automotiva\n\n"
-            "Ardu-Stim é um projeto open-source que simula sinais reais no Arduino Nano, Uno ou Mega "
-            "de sensores automotivos (RPM, FASE).\n\n"
-            "Perfeito para testes e desenvolvimento de aplicações embarcadas "
-            "sem precisar de um carro real.\n\n"
-            "Este software NÃO foi desenvolvido por nós. Todos os créditos "
-            "e direitos autorais pertencem aos autores originais do projeto."
-        )
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-        
-        # Botões
-        btn_layout = QtWidgets.QHBoxLayout()
-        
-        self.btn_launch = QtWidgets.QPushButton("▶ Iniciar Simulador")
-        self.btn_launch.setMinimumHeight(40)
-        self.btn_launch.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; font-size: 12px;")
-        self.btn_launch.clicked.connect(self.launch_ardustim)
-        btn_layout.addWidget(self.btn_launch)
-        
-        self.btn_github = QtWidgets.QPushButton("🔗 GitHub (Ardu-Stim)")
-        self.btn_github.setMinimumHeight(40)
-        self.btn_github.setStyleSheet("background-color: #333; color: white; font-weight: bold; font-size: 12px;")
-        self.btn_github.clicked.connect(self.open_github_ardustim)
-        btn_layout.addWidget(self.btn_github)
-        
-        layout.addSpacing(20)
-        layout.addLayout(btn_layout)
-        
-        # Separador
-        layout.addSpacing(10)
-        
-        # Seção de doação
-        donate_label = QtWidgets.QLabel("❤ Gostou do projeto?")
-        donate_font = donate_label.font()
-        donate_font.setBold(True)
-        donate_label.setFont(donate_font)
-        layout.addWidget(donate_label)
-        
-        donate_text = QtWidgets.QLabel(
-            "Se este projeto foi útil para você, considere fazer uma doação "
-            "aos autores originais do Ardu-Stim para apoiar o desenvolvimento contínuo!"
-        )
-        donate_text.setWordWrap(True)
-        layout.addWidget(donate_text)
-        
-        self.btn_donate = QtWidgets.QPushButton("💰 Fazer Doação")
-        self.btn_donate.setMinimumHeight(35)
-        self.btn_donate.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
-        self.btn_donate.clicked.connect(self.open_donate)
-        layout.addWidget(self.btn_donate)
-        
-        layout.addStretch()
-        
-        # Status label
-        self.status_label = QtWidgets.QLabel("Pronto")
-        layout.addWidget(self.status_label)
-
-    def launch_ardustim(self):
-        """Procurar e executar Ardu-Stim.1.2.1.exe"""
-        # Procurar no mesmo diretório ou em subpastas
-        base_dir = os.path.dirname(__file__)
-        possible_paths = [
-            os.path.join(base_dir, "Ardu-Stim.1.2.1.exe"),
-            os.path.join(base_dir, "tools", "Ardu-Stim.1.2.1.exe"),
-            os.path.join(base_dir, "simulators", "Ardu-Stim.1.2.1.exe"),
-            os.path.join(os.path.expanduser("~"), "Desktop", "Ardu-Stim.1.2.1.exe"),
-        ]
-        
-        exe_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                exe_path = path
-                break
-        
-        if not exe_path:
-            # Pedir ao usuário para localizar
-            exe_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-                self, "Localizar Ardu-Stim.1.2.1.exe", "", "Executáveis (*.exe)"
-            )
-        
-        if not exe_path or not os.path.exists(exe_path):
-            self.status_label.setText("❌ Ardu-Stim.1.2.1.exe não encontrado!")
-            return
-        
-        try:
-            self.status_label.setText("⏳ Iniciando simulador...")
-            self.btn_launch.setEnabled(False)
-            # Executar em thread separada para não travar UI
-            self.ardu_thread = threading.Thread(target=self._run_ardustim, args=(exe_path,))
-            self.ardu_thread.daemon = True
-            self.ardu_thread.start()
-        except Exception as e:
-            self.status_label.setText(f"❌ Erro: {str(e)}")
-            self.btn_launch.setEnabled(True)
-
-    def _run_ardustim(self, exe_path):
-        """Executar Ardu-Stim e fechar janela ao terminar."""
-        try:
-            self.ardu_process = subprocess.Popen(exe_path)
-            self.status_label.setText("▶ Simulador em execução...")
-            # Aguardar conclusão
-            self.ardu_process.wait()
-            # Fechar esta janela após simulador terminar
-            QtCore.QTimer.singleShot(500, self.close)
-        except Exception as e:
-            self.status_label.setText(f"❌ Erro ao executar: {str(e)}")
-        finally:
-            self.btn_launch.setEnabled(True)
-
-    def open_github_ardustim(self):
-        """Abrir GitHub do projeto Ardu-Stim."""
-        # URL do projeto Ardu-Stim (pesquisado no GitHub)
-        QtGui.QDesktopServices.openUrl(
-            QtCore.QUrl("https://github.com/speeduino/Ardu-Stim")
-        )
-
-    def open_donate(self):
-        """Abrir página de doações."""
-        # Link genérico para doações (pode ser customizado)
-        QtGui.QDesktopServices.openUrl(
-            QtCore.QUrl("https://github.com/sponsors/noisymime")
-        )
-
-    def closeEvent(self, ev):
-        """Ao fechar a janela, interromper processo se estiver rodando."""
-        if self.ardu_process and self.ardu_process.poll() is None:
-            try:
-                self.ardu_process.terminate()
-                self.ardu_process.wait(timeout=2)
-            except Exception:
-                pass
-        super().closeEvent(ev)
-
-
-# ---------- Osciloscópio ----------
 class Oscilloscope(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -429,13 +264,6 @@ class Oscilloscope(QtWidgets.QMainWindow):
         # estado
         self.reader = None
         self.paused = False
-        self.num_channels = 2  # 2 ou 4 canais
-        
-        # TriggerX state
-        self.triggerx_active = False
-        self.last_data_sum = 0.0
-        self.stability_counter = 0
-        self.stability_threshold = 5  # quantidade de frames estáveis antes de confirmar
 
         # parâmetros persistentes / defaults
         self.scale_min = -5.0
@@ -518,12 +346,6 @@ class Oscilloscope(QtWidgets.QMainWindow):
         top_row.addSpacing(10)
         self.btn_fit = QtWidgets.QPushButton("Enquadrar")
         top_row.addWidget(self.btn_fit)
-        
-        # NOVO: Botão Ardu-Stim ao lado de Enquadrar
-        self.btn_ardustim = QtWidgets.QPushButton("📡 Ardu-Stim")
-        self.btn_ardustim.setMaximumWidth(120)
-        self.btn_ardustim.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
-        top_row.addWidget(self.btn_ardustim)
 
         top_row.addStretch()
 
@@ -579,12 +401,6 @@ class Oscilloscope(QtWidgets.QMainWindow):
         self.refresh_full_btn = QtWidgets.QPushButton("FULL")
         self.refresh_full_btn.setMaximumWidth(60)
         refresh_row.addWidget(self.refresh_full_btn)
-        
-        # TriggerX button - auto-stabilize FPS
-        self.btn_triggerx = QtWidgets.QPushButton("TriggerX")
-        self.btn_triggerx.setMaximumWidth(70)
-        self.btn_triggerx.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-        refresh_row.addWidget(self.btn_triggerx)
         
         refresh_row.addStretch()
 
@@ -675,16 +491,14 @@ class Oscilloscope(QtWidgets.QMainWindow):
         self.btn_reset.clicked.connect(self.reset_measurements)
         self.sps_box.valueChanged.connect(self.update_sps)
         self.chk_autoscroll.stateChanged.connect(self.on_autoscroll_changed)
-        self.chk_autoscale.stateChanged.connect(lambda s: None)
+        self.chk_autoscale.stateChanged.connect(lambda s: None)  # keep checkbox state; use button to trigger
         self.btn_autoscale.clicked.connect(self.auto_scale_y)
         self.btn_calibrate.clicked.connect(self.open_calibration)
         self.btn_fit.clicked.connect(self.fit_view)
-        self.btn_ardustim.clicked.connect(self.open_ardustim_window)  # NOVO
-
+        
         # refresh rate connections
         self.refresh_slider.valueChanged.connect(self.on_refresh_rate_changed)
         self.refresh_full_btn.clicked.connect(self.set_refresh_full)
-        self.btn_triggerx.clicked.connect(self.toggle_triggerx)
 
         self.volt_unit_box.currentIndexChanged.connect(self.update_scale_info_label)
         self.time_unit_box.currentIndexChanged.connect(self.update_scale_info_label)
@@ -697,97 +511,6 @@ class Oscilloscope(QtWidgets.QMainWindow):
         self.update_scale_info_label()
 
     # ---------- helpers ----------
-    def toggle_triggerx(self):
-        """Ativa/desativa modo TriggerX que sincroniza FPS com o período do sinal."""
-        self.triggerx_active = not self.triggerx_active
-        self.stability_counter = 0
-        self.last_trigger_period = None
-        
-        if self.triggerx_active:
-            self.btn_triggerx.setText("TriggerX ✓")
-            self.btn_triggerx.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
-            self.status_label.setText("TriggerX: Sincronizando com o sinal...")
-        else:
-            self.btn_triggerx.setText("TriggerX")
-            self.btn_triggerx.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-            self.status_label.setText("TriggerX desativado")
-
-    def compute_stability_metric(self):
-        """Calcula métrica de estabilidade do sinal (variância normalizada)."""
-        try:
-            # Usar últimos 25% do buffer para avaliar estabilidade
-            window_size = max(100, self.buffer_len // 4)
-            recent_data = np.hstack([self.data1[-window_size:], self.data2[-window_size:]])
-            
-            if recent_data.size == 0:
-                return 0.0
-            
-            # Estabilidade = inverso da variação (quanto menor variação, mais estável)
-            # Usar desvio padrão normalizado pela amplitude
-            amplitude = np.max(recent_data) - np.min(recent_data)
-            if amplitude < 1e-10:
-                return 1.0  # sinal constante = máxima estabilidade
-            
-            std_dev = np.std(recent_data)
-            stability = 1.0 / (1.0 + (std_dev / amplitude))  # 0 a 1
-            return float(stability)
-        except Exception:
-            return 0.0
-
-    def auto_adjust_fps_triggerx(self):
-        """Sincroniza FPS com o período do sinal para parar o gráfico no padrão correto."""
-        if not self.triggerx_active:
-            return
-        
-        try:
-            sps = max(1, int(self.sps_box.value()))
-            
-            # Calcular período do sinal (inverso da frequência)
-            f1 = compute_frequency(self.data1, sps)
-            f2 = compute_frequency(self.data2, sps)
-            avg_freq = (f1 + f2) / 2.0 if f1 > 0 and f2 > 0 else max(f1, f2)
-            
-            if avg_freq <= 0:
-                self.status_label.setText("TriggerX: Aguardando sinal...")
-                return
-            
-            # Período em segundos
-            period_s = 1.0 / avg_freq
-            
-            # *** MULTIPLICAR POR 10 AUTOMATICAMENTE ***
-            period_s_adjusted = period_s * 10.0
-            
-            # Converter período para intervalo de timer
-            period_interval_ms = int(period_s_adjusted * 1000)
-            
-            # Ajustar para faixa razoável (10ms a 500ms)
-            target_interval = max(10, min(int(period_interval_ms * 0.4), 500))
-            
-            current_interval = self.timer.interval()
-            
-            # Se diferença > 20%, ajustar gradualmente
-            diff_percent = abs(target_interval - current_interval) / max(current_interval, 1) * 100
-            
-            if diff_percent > 20:
-                # Ajuste gradual para suavidade
-                new_interval = int(current_interval * 0.9 + target_interval * 0.1)
-                self.refresh_slider.blockSignals(True)
-                self.refresh_slider.setValue(new_interval)
-                self.refresh_slider.blockSignals(False)
-                self.on_refresh_rate_changed(new_interval)
-                
-                self.status_label.setText(
-                    f"TriggerX: {avg_freq:.1f}Hz | Período: {period_s_adjusted*1000:.1f}ms | "
-                    f"FPS: {1000/new_interval:.1f}"
-                )
-            else:
-                # Estabilizado
-                self.status_label.setText(
-                    f"TriggerX ✓ SINCRONIZADO | {avg_freq:.1f}Hz | "
-                    f"{1000/current_interval:.1f}Hz (FPS)""")
-        except Exception as e:
-            pass
-
     def on_refresh_rate_changed(self, value):
         """Atualizar intervalo do timer quando slider muda."""
         interval_ms = int(value)
@@ -798,18 +521,16 @@ class Oscilloscope(QtWidgets.QMainWindow):
 
     def set_refresh_full(self):
         """Botão FULL: atualizar a cada data packet (10ms padrão, ajustável)."""
+        # usar mínimo do slider (10ms) para máxima taxa
         self.refresh_slider.setValue(10)
 
     def refresh_ports(self):
         self.port_box.clear()
         for p in serial.tools.list_ports.comports():
-            # Exibir: "COM3 - Arduino Uno" ou "COM3 - USB Serial Device"
-            display_name = f"{p.device} - {p.description}" if p.description else p.device
-            self.port_box.addItem(display_name, p.device)  # display_name visível, p.device como data
+            self.port_box.addItem(p.device)
 
     def connect_serial(self):
-        # Usar userData (p.device) em vez de texto
-        port = self.port_box.currentData()  # retorna p.device
+        port = self.port_box.currentText()
         if not port:
             self.status_label.setText("Nenhuma porta selecionada")
             return
@@ -948,70 +669,52 @@ class Oscilloscope(QtWidgets.QMainWindow):
 
     # ---------- plot/update ----------
     def update_plot(self):
-        """Atualizar plot e chamar TriggerX se ativo."""
         try:
             if not self.paused:
                 sps = max(1, int(self.sps_box.value()))
                 N = self.buffer_len
-                
-                # Cálculos revisados:
-                # X axis em segundos: de (-tamanho_buffer/sps) até 0
-                # Aplicar time_bias COMO MULTIPLICADOR (dilata o tempo visualmente)
-                t0_seconds = -float(N - 1) / float(sps)
-                x_seconds = np.linspace(t0_seconds, 0.0, N)
-                
-                # Aplicar time_bias (multiplicador)
-                time_bias = float(getattr(self, "time_bias", 1.0))
-                x_biased = x_seconds * time_bias
-                
-                # Converter para unidade de tempo selecionada
+                # X axis in seconds (from -window .. 0) — aplicar time_bias
+                t0 = -float(N - 1) / float(sps)
+                x_seconds = np.linspace(t0, 0.0, N) * float(getattr(self, "time_bias", 1.0))
+                # scale x to selected time unit for display
                 t_unit = self.time_unit_box.currentText()
                 tfactor = TIME_FACTORS.get(t_unit, 1.0)
-                x_display = x_biased / tfactor
-                
-                # Unidade de voltagem
+                x_display = x_seconds / tfactor
+                # apply voltage unit
                 v_unit = self.volt_unit_box.currentText()
                 vfactor = VOLT_FACTORS.get(v_unit, 1.0)
-                
-                # Plotar curvas
                 self.curve1.setData(x_display, self.data1 / vfactor)
                 self.curve2.setData(x_display, self.data2 / vfactor)
-                
-                # Auto-scroll (apenas se ativado)
                 if self.auto_scroll:
+                    # only force X range when auto-scroll enabled
                     self.plot_widget.setXRange(float(x_display[0]), float(x_display[-1]), padding=0.0)
         except Exception:
             pass
 
-        # Computar medidas (com cálculos revisados)
+        # compute measures
         sps = max(1, int(self.sps_box.value()))
-        
-        # Frequência com correção de freq_bias (DIVISOR)
         f1 = compute_frequency(self.data1, sps)
         f2 = compute_frequency(self.data2, sps)
+        # aplicar correção de frequência baseada em bias configurado
         try:
-            freq_bias = float(getattr(self, "freq_bias", 1.0))
-            if freq_bias > 0:  # divisor
-                f1 = f1 / freq_bias
-                f2 = f2 / freq_bias
+            fb = float(getattr(self, "freq_bias", 1.0))
+            if fb != 0:
+                f1 = f1 / fb
+                f2 = f2 / fb
         except Exception:
             pass
 
-        # RMS: sqrt(média dos quadrados)
         r1 = float(np.sqrt(np.mean(np.square(self.data1)))) if self.data1.size else 0.0
         r2 = float(np.sqrt(np.mean(np.square(self.data2)))) if self.data2.size else 0.0
-        
-        # Vpp: max - min (pico-a-pico)
         p1 = float(np.max(self.data1) - np.min(self.data1)) if self.data1.size else 0.0
         p2 = float(np.max(self.data2) - np.min(self.data2)) if self.data2.size else 0.0
 
-        # Unidades
+        # display according to units
         v_unit = self.volt_unit_box.currentText()
         t_unit = self.time_unit_box.currentText()
         vfactor = VOLT_FACTORS.get(v_unit, 1.0)
         tfactor = TIME_FACTORS.get(t_unit, 1.0)
 
-        # Exibir valores conforme modo selecionado
         dtype = self.display_combo.currentText()
         if dtype == "Voltage":
             last1 = self.data1[-1] / vfactor
@@ -1028,10 +731,10 @@ class Oscilloscope(QtWidgets.QMainWindow):
             self.value_label_ch1.setText(f"CH1 Freq: {f1:.2f} Hz")
             self.value_label_ch2.setText(f"CH2 Freq: {f2:.2f} Hz")
 
+        # scale info under plot: show window in chosen time unit
+        window_s = float(self.buffer_len) / max(1, sps) * float(getattr(self, "time_bias", 1.0))
+        window_display = window_s / tfactor
         self.update_scale_info_label()
-        
-        # TriggerX: auto-ajustar FPS para estabilidade
-        self.auto_adjust_fps_triggerx()
 
     def fit_view(self):
         """Enquadrar: ajustar X para janela e Y para dados, but keep user able to change afterwards."""
@@ -1063,11 +766,6 @@ class Oscilloscope(QtWidgets.QMainWindow):
             self.save_config()
         except Exception:
             pass
-
-    def open_ardustim_window(self):
-        """Abrir janela top-level do Ardu-Stim."""
-        self.ardustim_window = ArduSimWindow(self)
-        self.ardustim_window.show()
 
     def on_view_range_changed(self, vb, ranges):
         # user changed view: disable auto-scroll so GUI doesn't force XRange
