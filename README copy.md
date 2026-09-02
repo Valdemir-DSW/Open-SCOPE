@@ -60,7 +60,7 @@ O traço principal pode atualizar a ~60 Hz, mas o histórico visual de persistê
 
 ## Firmware
 
-O firmware Direct Stream v6 não precisou ser alterado para estas correções. Ele já opera no modelo correto: ADC -> pequeno bloco de transporte -> USB. Trigger e histórico são do Windows.
+O firmware Direct Stream v7 mantém o modelo correto `ADC -> pequeno bloco de transporte -> USB`, com trigger e histórico no Windows. Nesta revisão ele também ganhou suporte opcional a **4 canais no STM32F103** (`SCOPE_CHANNEL_COUNT 4`, usando PA3 como CH4), parser de comandos mais robusto e evita reiniciar a aquisição quando a taxa solicitada já é a atual. O Leonardo continua em 2 canais.
 
 ## Como abrir
 
@@ -105,3 +105,12 @@ O ícone `resources\OpenScope.ico` já acompanha o projeto e é usado pelo aplic
 ## Ferramenta adicional
 
 O menu **Ferramentas** inclui a **Calculadora RPM ↔ frequência**, que converte RPM, frequência de dentes, período entre dentes, ângulo por posição e período por volta. Para rodas com falha, informe a quantidade teórica de posições (por exemplo, 36 para uma roda 36-1).
+
+
+## Novas ferramentas
+
+- **Analisador de rede elétrica:** RMS, pico, pico-a-pico, componente DC, fator de crista, frequência e fase relativa para até 4 canais.
+- **Sequência de fase:** usa quaisquer 3 canais disponíveis e indica sequência ABC/positiva, ACB/reversa ou indeterminada.
+- **Plugins:** menu próprio com carregamento manual de arquivos `.py` da pasta `plugins`. Plugins nunca são carregados automaticamente.
+- **Aquisição:** perfis voltaram a ser selecionáveis e o resumo mostra amostras por divisão, intervalo de amostragem, histórico e carga estimada do payload.
+- **Controles rotativos:** Time/div e altura da grade usam um dial visualmente mais fino; o seletor discreto possui passos intermediários para movimentação mais suave.

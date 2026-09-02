@@ -1,6 +1,6 @@
 #define MyAppName "OpenScope"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "Falido"
+#define MyAppPublisher "Valdemir"
 #define MyAppExeName "OpenScope.exe"
 
 [Setup]

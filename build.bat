@@ -38,13 +38,14 @@ echo [3/4] Building OpenScope with Nuitka...
   --remove-output ^
   --output-dir=build ^
   --output-filename=OpenScope.exe ^
-  --company-name=Falido ^
+  --company-name=Valdemir ^
   --product-name=OpenScope ^
   --file-description="OpenScope Oscilloscope" ^
   --file-version=1.0.0.0 ^
   --product-version=1.0.0.0 ^
   --include-package=pyqtgraph ^
   --include-data-dir=resources=resources ^
+  --include-data-dir=plugins=plugins ^
   %ICON_ARG% ^
   main.py
 if errorlevel 1 exit /b 1

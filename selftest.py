@@ -91,10 +91,12 @@ def test_direct_history_and_trigger():
 
 def main():
     direct = decode_fragmented(make_packet(3, 12, 64, 80_000, sequence=123, flags=0x02))
+    four = decode_fragmented(make_packet(4, 12, 64, 60_000, sequence=124, flags=0x02))
     leo = decode_fragmented(make_packet(2, 10, 32, 25_000, sequence=9, flags=0x02))
     old = decode_fragmented(make_packet(2, 10, 64, 20_000, version=3, packet_type=PACKET_CAPTURE))
 
     assert direct.is_stream and direct.raw.shape == (64, 3)
+    assert four.is_stream and four.raw.shape == (64, 4)
     assert leo.is_stream and leo.raw.shape == (32, 2)
     assert int(leo.raw.max()) <= 1023
     assert not old.is_stream
@@ -103,6 +105,7 @@ def main():
     print('OpenScope direct-stream v7 self-test: PASS')
     print('Header:', HEADER.size, 'bytes | extended:', V4_HEADER_SIZE, 'bytes')
     print('STM direct:', direct.raw.shape, direct.sample_rate, 'Sa/s/ch')
+    print('4-channel protocol:', four.raw.shape, four.sample_rate, 'Sa/s/ch')
     print('Leonardo direct:', leo.raw.shape, leo.sample_rate, 'Sa/s/ch')
     print('PC history: 1.000 s continuous | voltage trigger: PASS')
     return 0

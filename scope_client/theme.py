@@ -83,9 +83,9 @@ QSlider::handle:horizontal {
     border-radius: 8px;
 }
 QDial {
-    background: #141b24;
-    min-width: 64px;
-    min-height: 64px;
+    background: transparent;
+    min-width: 54px;
+    min-height: 54px;
 }
 QDial::groove {
     background: #202936;

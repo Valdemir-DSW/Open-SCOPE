@@ -120,7 +120,7 @@ class CaptureDecoder:
                 or base.header_size < MIN_HEADER_SIZE
                 or base.header_size > 4096
                 or base.channel_count < 1
-                or base.channel_count > 3
+                or base.channel_count > 4
                 or base.adc_bits < 8
                 or base.adc_bits > 16
                 or base.frame_count < 1

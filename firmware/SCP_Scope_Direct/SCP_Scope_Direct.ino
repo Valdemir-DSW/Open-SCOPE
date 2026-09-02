@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 // ============================================================================
-// SCP SCOPE DIRECT STREAM — PROFESSIONAL v6
+// SCP SCOPE DIRECT STREAM — PROFESSIONAL v7
 // STM32F103 + ATmega32U4 / Arduino Leonardo
 //
 // Acquisition policy:
@@ -24,7 +24,7 @@
 
 #define SCOPE_TARGET                   SCOPE_TARGET_AUTO
 
-// 0 = target default. STM32: 2 or 3. Leonardo: 2.
+// 0 = target default. STM32: 2, 3 or 4. Leonardo: 2.
 #define SCOPE_CHANNEL_COUNT            0
 
 // 0 = profile default at boot.
@@ -50,6 +50,8 @@
 #define SCOPE_STM32_CH2_ADC_CHANNEL    1U
 #define SCOPE_STM32_CH3_PIN            PA2
 #define SCOPE_STM32_CH3_ADC_CHANNEL    2U
+#define SCOPE_STM32_CH4_PIN            PA3
+#define SCOPE_STM32_CH4_ADC_CHANNEL    3U
 
 // Leonardo A0=ADC7, A1=ADC6.
 #define SCOPE_LEONARDO_CH1_PIN         A0
@@ -84,14 +86,24 @@
         #define SCOPE_ACTIVE_CHANNELS SCOPE_CHANNEL_COUNT
     #endif
 
-    #if (SCOPE_ACTIVE_CHANNELS != 2U) && (SCOPE_ACTIVE_CHANNELS != 3U)
-        #error "STM32F103 supports 2 or 3 channels."
+    #if (SCOPE_ACTIVE_CHANNELS != 2U) && (SCOPE_ACTIVE_CHANNELS != 3U) && (SCOPE_ACTIVE_CHANNELS != 4U)
+        #error "STM32F103 supports 2, 3 or 4 channels."
     #endif
 
     #define SCOPE_ADC_BITS 12U
     #define SCOPE_ADC_MAX 4095U
 
-    #if SCOPE_ACTIVE_CHANNELS == 3U
+    #if SCOPE_ACTIVE_CHANNELS == 4U
+        // Four channels use two simultaneous ADC ranks. Rates are kept below
+        // the 3-channel profile so the USB/serial payload stays near the same
+        // transport bandwidth as the proven 3-channel configuration.
+        #define SCOPE_ADC_RANKS                2U
+        #define SCOPE_PROFILE_MAX_RATE         120000UL
+        #define SCOPE_PROFILE_HIGH_RATE        110000UL
+        #define SCOPE_PROFILE_STANDARD_RATE      60000UL
+        #define SCOPE_PROFILE_LONG_RATE        15000UL
+        #define SCOPE_PROFILE_CHUNK            256U
+    #elif SCOPE_ACTIVE_CHANNELS == 3U
         #define SCOPE_ADC_RANKS                2U
         #define SCOPE_PROFILE_MAX_RATE         160000UL
         #define SCOPE_PROFILE_HIGH_RATE        150000UL
@@ -366,8 +378,11 @@ static void scopeHardwareInit()
 
     pinMode(SCOPE_STM32_CH1_PIN, INPUT_ANALOG);
     pinMode(SCOPE_STM32_CH2_PIN, INPUT_ANALOG);
-#if SCOPE_ACTIVE_CHANNELS == 3U
+#if SCOPE_ACTIVE_CHANNELS >= 3U
     pinMode(SCOPE_STM32_CH3_PIN, INPUT_ANALOG);
+#endif
+#if SCOPE_ACTIVE_CHANNELS >= 4U
+    pinMode(SCOPE_STM32_CH4_PIN, INPUT_ANALOG);
 #endif
 
     // 72 MHz / 6 = 12 MHz ADC clock on the normal F103 clock tree.
@@ -386,8 +401,8 @@ static void scopeHardwareInit()
     stmSetSampleTime(ADC1, SCOPE_STM32_CH1_ADC_CHANNEL);
     stmSetSampleTime(ADC2, SCOPE_STM32_CH2_ADC_CHANNEL);
 #else
-    // One timer event = one logical 3-channel frame.
-    // Rank1: ADC1 CH1 + ADC2 CH3; Rank2: ADC1 CH2 + ADC2 CH3(extra).
+    // One timer event = one logical 3/4-channel frame across two ADC ranks.
+    // Rank1: ADC1 CH1 + ADC2 CH3; Rank2: ADC1 CH2 + ADC2 CH4 (or CH3 spare).
     stmSetLength(ADC1, 2U);
     stmSetLength(ADC2, 2U);
     ADC1->CR1 |= ADC_CR1_SCAN;
@@ -395,10 +410,17 @@ static void scopeHardwareInit()
     stmSetRank(ADC1, 1U, SCOPE_STM32_CH1_ADC_CHANNEL);
     stmSetRank(ADC1, 2U, SCOPE_STM32_CH2_ADC_CHANNEL);
     stmSetRank(ADC2, 1U, SCOPE_STM32_CH3_ADC_CHANNEL);
+#if SCOPE_ACTIVE_CHANNELS == 4U
+    stmSetRank(ADC2, 2U, SCOPE_STM32_CH4_ADC_CHANNEL);
+#else
     stmSetRank(ADC2, 2U, SCOPE_STM32_CH3_ADC_CHANNEL);
+#endif
     stmSetSampleTime(ADC1, SCOPE_STM32_CH1_ADC_CHANNEL);
     stmSetSampleTime(ADC1, SCOPE_STM32_CH2_ADC_CHANNEL);
     stmSetSampleTime(ADC2, SCOPE_STM32_CH3_ADC_CHANNEL);
+#if SCOPE_ACTIVE_CHANNELS == 4U
+    stmSetSampleTime(ADC2, SCOPE_STM32_CH4_ADC_CHANNEL);
+#endif
 #endif
 
     // Dual regular simultaneous = 0110.
@@ -505,11 +527,20 @@ static bool scopeBuildNextPayload(uint8_t *flags)
             scopeTxPayload[out++] = (uint8_t)(samples[ch] & 0xFFU);
             scopeTxPayload[out++] = (uint8_t)(samples[ch] >> 8U);
         }
-#else
+#elif SCOPE_ACTIVE_CHANNELS == 3U
         const uint32_t p0 = scopeStmDma[base + (uint32_t)i * 2U];
         const uint32_t p1 = scopeStmDma[base + (uint32_t)i * 2U + 1U];
         const uint16_t samples[3] = { stmLow(p0), stmLow(p1), stmHigh(p0) };
         for (uint8_t ch = 0U; ch < 3U; ++ch)
+        {
+            scopeTxPayload[out++] = (uint8_t)(samples[ch] & 0xFFU);
+            scopeTxPayload[out++] = (uint8_t)(samples[ch] >> 8U);
+        }
+#else
+        const uint32_t p0 = scopeStmDma[base + (uint32_t)i * 2U];
+        const uint32_t p1 = scopeStmDma[base + (uint32_t)i * 2U + 1U];
+        const uint16_t samples[4] = { stmLow(p0), stmLow(p1), stmHigh(p0), stmHigh(p1) };
+        for (uint8_t ch = 0U; ch < 4U; ++ch)
         {
             scopeTxPayload[out++] = (uint8_t)(samples[ch] & 0xFFU);
             scopeTxPayload[out++] = (uint8_t)(samples[ch] >> 8U);
@@ -770,26 +801,36 @@ static void scopeStreamService()
 
 static char scopeCommandBuffer[72];
 static uint8_t scopeCommandLength = 0U;
+static bool scopeCommandOverflow = false;
+
+static void scopeSetRequestedRate(uint32_t rate)
+{
+    if (rate < 10UL) rate = 10UL;
+    if (rate > SCOPE_PROFILE_MAX_RATE) rate = SCOPE_PROFILE_MAX_RATE;
+    if (rate == scopeRequestedRate && scopeActualRate != 0UL)
+        return;
+    scopeRequestedRate = rate;
+    scopeRestart();
+}
 
 static void scopeApplyProfile(const char *profile)
 {
     if (!profile) return;
 
+    uint32_t selected = scopeRequestedRate;
     if (strcmp(profile, "HIGH") == 0)
-        scopeRequestedRate = SCOPE_ACTIVE_HIGH_RATE;
+        selected = SCOPE_ACTIVE_HIGH_RATE;
     else if (strcmp(profile, "NORMAL") == 0 || strcmp(profile, "STANDARD") == 0 ||
              strcmp(profile, "ENGINE") == 0 || strcmp(profile, "AUTO") == 0)
-        scopeRequestedRate = SCOPE_ACTIVE_STANDARD_RATE;
+        selected = SCOPE_ACTIVE_STANDARD_RATE;
     else if (strcmp(profile, "LONG") == 0)
-        scopeRequestedRate = SCOPE_ACTIVE_LONG_RATE;
+        selected = SCOPE_ACTIVE_LONG_RATE;
     else if (strcmp(profile, "MANUAL") == 0)
         return;
     else
         return;
 
-    if (scopeRequestedRate > SCOPE_PROFILE_MAX_RATE)
-        scopeRequestedRate = SCOPE_PROFILE_MAX_RATE;
-    scopeRestart();
+    scopeSetRequestedRate(selected);
 }
 
 static void scopeHandleCommand(char *line)
@@ -827,11 +868,8 @@ static void scopeHandleCommand(char *line)
     {
         char *arg = strtok(NULL, " \t\r");
         if (!arg) return;
-        uint32_t rate = strtoul(arg, NULL, 10);
-        if (rate < 10UL) rate = 10UL;
-        if (rate > SCOPE_PROFILE_MAX_RATE) rate = SCOPE_PROFILE_MAX_RATE;
-        scopeRequestedRate = rate;
-        scopeRestart();
+        const uint32_t rate = strtoul(arg, NULL, 10);
+        scopeSetRequestedRate(rate);
         return;
     }
 
@@ -854,16 +892,25 @@ static void scopeReadCommands()
         const char c = (char)Serial.read();
         if (c == '\n')
         {
-            scopeCommandBuffer[scopeCommandLength] = '\0';
-            scopeHandleCommand(scopeCommandBuffer);
+            if (!scopeCommandOverflow)
+            {
+                scopeCommandBuffer[scopeCommandLength] = '\0';
+                scopeHandleCommand(scopeCommandBuffer);
+            }
             scopeCommandLength = 0U;
+            scopeCommandOverflow = false;
         }
-        else if (c != '\r')
+        else if (c != '\r' && !scopeCommandOverflow)
         {
             if (scopeCommandLength < sizeof(scopeCommandBuffer) - 1U)
                 scopeCommandBuffer[scopeCommandLength++] = c;
             else
+            {
+                // Discard the rest of an oversized line. Resetting length here
+                // could make the trailing bytes look like a new valid command.
                 scopeCommandLength = 0U;
+                scopeCommandOverflow = true;
+            }
         }
     }
 }

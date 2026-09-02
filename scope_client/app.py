@@ -28,10 +28,13 @@ from .pc_trigger import find_crossings
 from .theme import APP_QSS, COMPACT_QSS
 from .ardustim_protocol import ArduStimConfig, ArduStimError, ArduStimFirmwareMismatch, ArduStimProtocol
 from .ui_preferences import apply_theme, set_windows_dark_titlebar, translate_ui, tr
+from .electrical_tools import ElectricalNetworkDialog, PhaseSequenceDialog
+from .plugin_host import PluginHost, PluginManagerDialog
 
 pg.setConfigOptions(antialias=False, useOpenGL=False)
 
-CHANNEL_COLORS = ["#ffd34e", "#51d7ff", "#ff65c3"]
+CHANNEL_COLORS = ["#ffd34e", "#51d7ff", "#ff65c3", "#8ee35a"]
+MAX_SCOPE_CHANNELS = 4
 TIME_DIVS = [
     1e-6, 2e-6, 2.5e-6, 5e-6, 10e-6, 20e-6, 25e-6, 50e-6,
     100e-6, 200e-6, 250e-6, 500e-6, 1e-3, 2e-3, 2.5e-3, 5e-3,
@@ -658,6 +661,50 @@ class LockedViewBox(pg.ViewBox):
         super().mouseClickEvent(ev)
 
 
+class SlimDial(QtWidgets.QDial):
+    """Thin custom rotary control with smooth pointer movement."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setNotchesVisible(False)
+        self.setWrapping(False)
+        self.setTracking(True)
+        self.setFixedSize(54, 54)
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        rect = QtCore.QRectF(self.rect()).adjusted(7.0, 7.0, -7.0, -7.0)
+
+        track = self.palette().color(QtGui.QPalette.Mid)
+        active = self.palette().color(QtGui.QPalette.Highlight)
+        handle = self.palette().color(QtGui.QPalette.ButtonText)
+        if not self.isEnabled():
+            active = self.palette().color(QtGui.QPalette.Disabled, QtGui.QPalette.Text)
+            handle = active
+
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setPen(QtGui.QPen(track, 2.0, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+        painter.drawArc(rect, 225 * 16, -270 * 16)
+
+        span = max(1, self.maximum() - self.minimum())
+        ratio = (self.value() - self.minimum()) / float(span)
+        painter.setPen(QtGui.QPen(active, 2.6, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+        painter.drawArc(rect, 225 * 16, int(round(-270.0 * ratio * 16.0)))
+
+        angle = math.radians(225.0 - 270.0 * ratio)
+        center = rect.center()
+        radius = rect.width() * 0.5
+        point = QtCore.QPointF(
+            center.x() + math.cos(angle) * radius,
+            center.y() - math.sin(angle) * radius,
+        )
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(handle)
+        painter.drawEllipse(point, 2.3, 2.3)
+        painter.end()
+
+
 class RotarySpin(QtWidgets.QWidget):
     valueChanged = QtCore.pyqtSignal(float)
 
@@ -684,13 +731,10 @@ class RotarySpin(QtWidgets.QWidget):
         title.setObjectName("mutedLabel")
         layout.addWidget(title)
 
-        self.dial = QtWidgets.QDial()
-        self.dial.setNotchesVisible(False)
-        self.dial.setWrapping(False)
+        self.dial = SlimDial()
         self.dial.setRange(int(round(minimum * self._scale)), int(round(maximum * self._scale)))
         self.dial.setSingleStep(max(1, int(round(step * self._scale))))
         self.dial.setPageStep(max(1, int(round(step * self._scale * 4))))
-        self.dial.setFixedSize(64, 64)
         layout.addWidget(self.dial, 0, QtCore.Qt.AlignHCenter)
 
         self.spin = QtWidgets.QDoubleSpinBox()
@@ -742,11 +786,11 @@ class RotaryChoice(QtWidgets.QWidget):
         title.setObjectName("mutedLabel")
         layout.addWidget(title)
 
-        self.dial = QtWidgets.QDial()
-        self.dial.setNotchesVisible(False)
-        self.dial.setWrapping(False)
-        self.dial.setRange(0, max(0, len(items) - 1))
-        self.dial.setFixedSize(64, 64)
+        self._dial_steps_per_item = 8
+        self.dial = SlimDial()
+        self.dial.setRange(0, max(0, (len(items) - 1) * self._dial_steps_per_item))
+        self.dial.setSingleStep(1)
+        self.dial.setPageStep(self._dial_steps_per_item)
         layout.addWidget(self.dial, 0, QtCore.Qt.AlignHCenter)
 
         self.combo = QtWidgets.QComboBox()
@@ -757,8 +801,12 @@ class RotaryChoice(QtWidgets.QWidget):
         self.dial.valueChanged.connect(self._dial_changed)
         self.combo.currentIndexChanged.connect(self._combo_changed)
 
-    def _dial_changed(self, index: int) -> None:
+    def _dial_changed(self, value: int) -> None:
         if self._updating:
+            return
+        index = int(round(value / float(self._dial_steps_per_item)))
+        index = max(0, min(self.combo.count() - 1, index))
+        if index == self.combo.currentIndex():
             return
         self._updating = True
         self.combo.setCurrentIndex(index)
@@ -769,12 +817,18 @@ class RotaryChoice(QtWidgets.QWidget):
         if self._updating:
             return
         self._updating = True
-        self.dial.setValue(index)
+        self.dial.setValue(index * self._dial_steps_per_item)
         self._updating = False
         self.currentIndexChanged.emit(index)
 
     def setCurrentIndex(self, index: int) -> None:
+        if self.combo.count() <= 0:
+            return
+        index = max(0, min(self.combo.count() - 1, int(index)))
+        self._updating = True
         self.combo.setCurrentIndex(index)
+        self.dial.setValue(index * self._dial_steps_per_item)
+        self._updating = False
 
 
 class ScopePlot(QtWidgets.QWidget):
@@ -853,7 +907,7 @@ class ScopePlot(QtWidgets.QWidget):
         self.delta_text.hide()
 
         self.last_x: Optional[np.ndarray] = None
-        self.last_display: List[Optional[tuple[np.ndarray, np.ndarray]]] = [None, None, None]
+        self.last_display: List[Optional[tuple[np.ndarray, np.ndarray]]] = [None] * MAX_SCOPE_CHANNELS
         self.persistence = 0
         self.view_box.set_soft_touch_enabled(False)
         self._update_grid_divisions(0.001)
@@ -888,7 +942,7 @@ class ScopePlot(QtWidgets.QWidget):
             self.clear_persistence_history()
 
     def clear_persistence_history(self) -> None:
-        self.last_display = [None, None, None]
+        self.last_display = [None] * MAX_SCOPE_CHANNELS
         for channel in self.history_curves:
             for curve in channel:
                 curve.hide()
@@ -910,7 +964,7 @@ class ScopePlot(QtWidgets.QWidget):
             # visible window exists, normal rolling coordinates take over.
             x = np.arange(capture.frame_count, dtype=np.float64) / float(capture.sample_rate)
         self.last_x = x
-        for ch in range(3):
+        for ch in range(MAX_SCOPE_CHANNELS):
             if ch < capture.channel_count and configs[ch].enabled:
                 cfg = configs[ch]
                 volts = cfg.raw_to_volts(capture.raw[:, ch], capture.header.adc_bits)
@@ -1173,7 +1227,7 @@ class AboutDialog(QtWidgets.QDialog):
             return f'''<h3>OpenScope</h3>
 <p>Osciloscópio e analisador de sinais de motor construído com Qt 5 / PyQt5.</p>
 <p><b>Versão:</b> {APP_VERSION}<br>
-<b>Desenvolvimento:</b> Falido<br>
+<b>Desenvolvimento:</b> Valdemir<br>
 <b>Qt:</b> {QtCore.QT_VERSION_STR}<br>
 <b>PyQt5:</b> {QtCore.PYQT_VERSION_STR}<br>
 <b>PyQtGraph:</b> {getattr(pg, '__version__', 'desconhecida')}<br>
@@ -1199,7 +1253,7 @@ class AboutDialog(QtWidgets.QDialog):
         return f'''<h3>OpenScope</h3>
 <p>Oscilloscope and engine-signal analyzer built with Qt 5 / PyQt5.</p>
 <p><b>Version:</b> {APP_VERSION}<br>
-<b>Development:</b> Falido<br>
+<b>Development:</b> Valdemir<br>
 <b>Qt:</b> {QtCore.QT_VERSION_STR}<br>
 <b>PyQt5:</b> {QtCore.PYQT_VERSION_STR}<br>
 <b>PyQtGraph:</b> {getattr(pg, '__version__', 'unknown')}<br>
@@ -2046,7 +2100,7 @@ class RpmFrequencyCalculatorDialog(QtWidgets.QDialog):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("OpenScope — Professional Oscilloscope")
+        self.setWindowTitle("OpenScope — Professional Oscilloscope · Valdemir")
         apply_optional_window_icon(self)
         self.setMinimumSize(1024, 620)
         self.resize(1440, 860)
@@ -2076,6 +2130,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trigger_has_lock = False
         self.last_stream_capture: Optional[Capture] = None
         self.quick_control_sync_block = False
+        self.plugin_host = PluginHost(self)
 
         # PC trigger pipeline. Edges are collected continuously while packets
         # arrive; rendering consumes only triggers whose post-trigger window is
@@ -2111,7 +2166,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(self.scope)
         self.scope.cursor_changed.connect(self._cursor_changed)
 
-        self.channel_panels = [ChannelPanel(i) for i in range(3)]
+        self.channel_panels = [ChannelPanel(i) for i in range(MAX_SCOPE_CHANNELS)]
         for panel in self.channel_panels:
             panel.changed.connect(self._settings_changed)
 
@@ -2125,6 +2180,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_preferences_menu()
         self._polish_help_menu()
         self._build_status()
+        self._sync_channel_count(3)
         self._refresh_ports()
         self._restore_settings()
         settings = QtCore.QSettings("SCP", "STM32Scope")
@@ -2154,8 +2210,11 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction("Exit", self.close)
 
         tools = self.menuBar().addMenu("&Tools")
+        self.tools_menu = tools
         self.act_fft = tools.addAction("FFT / Spectrum…")
         self.act_xy = tools.addAction("XY Mode...")
+        self.act_electrical_network = tools.addAction("Electrical Network Analyzer…")
+        self.act_phase_sequence = tools.addAction("Phase Sequence…")
         self.act_rpm_frequency = tools.addAction("RPM / Frequency Calculator…")
         self.act_autoset = tools.addAction("Auto Set")
         self.act_reset_cal = tools.addAction("Reset active channel calibration")
@@ -2179,6 +2238,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_load_session.triggered.connect(self._load_session_dialog)
         self.act_fft.triggered.connect(self._show_fft)
         self.act_xy.triggered.connect(self._show_xy)
+        self.act_electrical_network.triggered.connect(self._show_electrical_network)
+        self.act_phase_sequence.triggered.connect(self._show_phase_sequence)
         self.act_rpm_frequency.triggered.connect(self._show_rpm_frequency_calculator)
         self.act_autoset.triggered.connect(self._autoset)
         self.act_reset_cal.triggered.connect(self._reset_active_calibration)
@@ -2186,6 +2247,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_soft_touch.toggled.connect(self.scope.set_soft_touch_enabled)
         self.act_tcursor.toggled.connect(self.scope.set_time_cursors)
         self.act_vcursor.toggled.connect(self.scope.set_voltage_cursors)
+
+        plugins = self.menuBar().addMenu("&Plugins")
+        self.act_plugin_manager = plugins.addAction("Plugin manager…")
+        self.act_plugin_folder = plugins.addAction("Open plugins folder")
+        self.act_plugin_manager.triggered.connect(self._show_plugin_manager)
+        self.act_plugin_folder.triggered.connect(self._open_plugin_folder)
 
     def _build_view_menu(self) -> None:
         view = self.menuBar().addMenu("&View")
@@ -2269,6 +2336,41 @@ class MainWindow(QtWidgets.QMainWindow):
         (self.act_lang_en if current_language == "en" else self.act_lang_pt).setChecked(True)
         self.theme_group.triggered.connect(self._set_theme_preference)
         self.language_group.triggered.connect(self._set_language_preference)
+
+    def _require_capture_for_tool(self, title: str) -> Optional[Capture]:
+        if self.current_capture is None:
+            QtWidgets.QMessageBox.information(self, title, "Acquire or open a capture first.")
+            return None
+        return self.current_capture
+
+    def _show_electrical_network(self) -> None:
+        capture = self._require_capture_for_tool("Electrical Network Analyzer")
+        if capture is None:
+            return
+        dialog = ElectricalNetworkDialog(capture, self._configs(), self)
+        translate_ui(dialog, getattr(self, "_language", "pt"))
+        set_windows_dark_titlebar(dialog, getattr(self, "_theme", "dark") == "dark")
+        dialog.exec_()
+
+    def _show_phase_sequence(self) -> None:
+        capture = self._require_capture_for_tool("Phase Sequence")
+        if capture is None:
+            return
+        dialog = PhaseSequenceDialog(capture, self._configs(), self)
+        translate_ui(dialog, getattr(self, "_language", "pt"))
+        set_windows_dark_titlebar(dialog, getattr(self, "_theme", "dark") == "dark")
+        dialog.exec_()
+
+    def _show_plugin_manager(self) -> None:
+        dialog = PluginManagerDialog(self.plugin_host, self)
+        translate_ui(dialog, getattr(self, "_language", "pt"))
+        set_windows_dark_titlebar(dialog, getattr(self, "_theme", "dark") == "dark")
+        dialog.exec_()
+
+    def _open_plugin_folder(self) -> None:
+        QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(str(self.plugin_host.ensure_directory()))
+        )
 
     def _show_about(self) -> None:
         dialog = AboutDialog(self)
@@ -2433,12 +2535,14 @@ class MainWindow(QtWidgets.QMainWindow):
             PROFILE_AUTO, PROFILE_STANDARD, PROFILE_HIGH, PROFILE_LONG, PROFILE_MANUAL
         ])
         self.acq_profile.setCurrentText(PROFILE_LONG)
-        self.acq_profile.setEnabled(False)
+        self.acq_profile.setEnabled(True)
+        self.acq_profile.setToolTip("Choose how OpenScope selects the device sample rate. Auto follows the visible timebase; Manual unlocks direct rate entry.")
 
         self.record_length = QtWidgets.QComboBox()
         for seconds in RECORD_LENGTHS:
             self.record_length.addItem(f"{seconds:g} s", seconds)
         self.record_length.setCurrentIndex(0)
+        self.record_length.setToolTip("PC-side rolling history. This does not change Time/div or MCU capture depth.")
 
         self.time_div = QtWidgets.QComboBox()
         for t in TIME_DIVS:
@@ -2473,6 +2577,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_rate.setRange(10, 850000)
         self.device_rate.setValue(30000)
         self.device_rate.setSuffix(" Sa/s")
+        self.device_rate.setToolTip("Effective per-channel sampling rate. Editable in Manual acquisition mode.")
 
         self.acq_info = QtWidgets.QLabel("Direct stream · PC history · PC trigger")
         self.acq_info.setWordWrap(True)
@@ -2513,7 +2618,7 @@ class MainWindow(QtWidgets.QMainWindow):
         trig_buttons_layout.addWidget(self.force_trigger_btn)
 
         self.trigger_source = QtWidgets.QComboBox()
-        for i in range(3):
+        for i in range(MAX_SCOPE_CHANNELS):
             self.trigger_source.addItem(f"CH{i + 1}", i)
         self.trigger_edge = QtWidgets.QComboBox()
         self.trigger_edge.addItem("Rising ↑", 1)
@@ -2561,7 +2666,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cform.setHorizontalSpacing(6)
             cform.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
             combo = QtWidgets.QComboBox()
-            for channel_index in range(3):
+            for channel_index in range(MAX_SCOPE_CHANNELS):
                 combo.addItem(f"CH{channel_index + 1}", channel_index)
             readout = QtWidgets.QLabel("Δt —    ΔV —")
             readout.setWordWrap(True)
@@ -2667,14 +2772,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         labels = ["Min", "Max", "Pk-Pk", "Mean", "RMS", "Freq", "Period", "Duty"]
         headers = ["On", "Color"] + labels
-        self.measurements = QtWidgets.QTableWidget(3, len(headers))
+        self.measurements = QtWidgets.QTableWidget(MAX_SCOPE_CHANNELS, len(headers))
         self.measurements.setAlternatingRowColors(True)
         self.measurements.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.measurements.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.measurements.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.measurements.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.measurements.verticalHeader().setVisible(True)
-        self.measurements.setVerticalHeaderLabels(["CH1", "CH2", "CH3"])
+        self.measurements.setVerticalHeaderLabels([f"CH{i + 1}" for i in range(MAX_SCOPE_CHANNELS)])
         self.measurements.setHorizontalHeaderLabels(headers)
         self.measurements.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         self.measurements.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
@@ -2686,7 +2791,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.measure_channel_checks = []
         self.measure_color_buttons = []
-        for ch in range(3):
+        for ch in range(MAX_SCOPE_CHANNELS):
             toggle = QtWidgets.QCheckBox()
             toggle.setChecked(self.channel_panels[ch].isChecked())
             toggle.toggled.connect(lambda enabled, index=ch: self._measurement_channel_toggled(index, enabled))
@@ -2704,7 +2809,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.measurements.setCellWidget(ch, 1, color_btn)
             self.measure_color_buttons.append(color_btn)
 
-        for ch in range(3):
+        for ch in range(MAX_SCOPE_CHANNELS):
             self._apply_channel_color(ch)
 
         dock.setWidget(self.measurements)
@@ -2848,6 +2953,8 @@ class MainWindow(QtWidgets.QMainWindow):
         channels, adc_bits = self.device_signature
         if int(adc_bits) <= 10:
             return 32_000
+        if int(channels) >= 4:
+            return 120_000
         return 160_000 if int(channels) >= 3 else 240_000
 
     def _standard_rate(self) -> int:
@@ -2856,14 +2963,21 @@ class MainWindow(QtWidgets.QMainWindow):
         channels, adc_bits = self.device_signature
         if int(adc_bits) <= 10:
             return 25_000
+        if int(channels) >= 4:
+            return 60_000
         return 80_000 if int(channels) >= 3 else 120_000
 
     def _high_rate(self) -> int:
-        return min(self._device_rate_limit(), 150_000 if self._device_rate_limit() <= 160_000 else 220_000)
+        limit = self._device_rate_limit()
+        if limit <= 120_000:
+            return min(limit, 110_000)
+        return min(limit, 150_000 if limit <= 160_000 else 220_000)
 
     def _long_rate(self) -> int:
         if self.device_signature is not None and int(self.device_signature[1]) <= 10:
             return 8_000
+        if self.device_signature is not None and int(self.device_signature[0]) >= 4:
+            return 15_000
         return 20_000 if self._device_rate_limit() <= 160_000 else 30_000
 
     def _auto_rate(self) -> int:
@@ -2924,9 +3038,12 @@ class MainWindow(QtWidgets.QMainWindow):
         visible_s = self._visible_seconds()
         screen_points = int(round(rate * visible_s))
         dt_us = 1e6 / max(rate, 1)
+        samples_per_div = max(1, int(round(screen_points / 10.0)))
+        channels = self.active_channel_count or (int(self.device_signature[0]) if self.device_signature else 3)
+        payload_mbps = rate * max(1, channels) * 16.0 / 1_000_000.0
         self.acq_info.setText(
-            f"{visible_s:g} s visible · ~{screen_points:,} samples/ch · "
-            f"Δt {dt_us:.2f} µs · {record_s:g} s PC history · direct stream"
+            f"{visible_s:g} s visible · ~{screen_points:,} samples/ch · ~{samples_per_div:,} samples/div · "
+            f"Δt {dt_us:.2f} µs · {record_s:g} s PC history · payload ≈ {payload_mbps:.2f} Mbit/s"
         )
 
     def _profile_changed(self) -> None:
@@ -3521,7 +3638,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_acquisition_info()
 
     def _sync_channel_count(self, count: int) -> None:
-        count = max(1, min(3, int(count)))
+        count = max(1, min(MAX_SCOPE_CHANNELS, int(count)))
         if count == self.active_channel_count:
             return
         self.active_channel_count = count
@@ -3664,7 +3781,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if capture is None:
             return
         configs = self._configs()
-        for ch in range(3):
+        for ch in range(MAX_SCOPE_CHANNELS):
             values = ["—"] * 8
             if ch < capture.channel_count:
                 volts = configs[ch].raw_to_volts(capture.raw[:, ch], capture.header.adc_bits)
@@ -3785,7 +3902,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.current_capture = Capture(header, raw.copy())
             self._sync_device_profile(self.current_capture)
             for i, cfg in enumerate(meta.get("channels", [])):
-                if i < 3:
+                if i < len(self.channel_panels):
                     self.channel_panels[i].set_config(cfg)
             self._sync_channel_count(channels)
             self._render_current()
@@ -3834,9 +3951,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_session(self, data: dict) -> None:
         for i, cfg in enumerate(data.get("channels", [])):
-            if i < 3:
+            if i < len(self.channel_panels):
                 self.channel_panels[i].set_config(cfg)
-        self.acq_profile.setCurrentText(PROFILE_LONG)
+        saved_profile = str(data.get("acq_profile", PROFILE_LONG))
+        if self.acq_profile.findText(saved_profile) >= 0:
+            self.acq_profile.setCurrentText(saved_profile)
+        else:
+            self.acq_profile.setCurrentText(PROFILE_LONG)
 
         record = float(data.get("record_length", 1.0))
         ridx = min(range(len(RECORD_LENGTHS)), key=lambda i: abs(RECORD_LENGTHS[i] - record))
