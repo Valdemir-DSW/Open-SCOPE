@@ -51,7 +51,7 @@ PROFILE_LONG = "Long record"
 PROFILE_MANUAL = "Manual"
 AUTO_TARGET_POINTS = 20_000
 APP_DISPLAY_NAME = "OpenScope"
-APP_VERSION = "1.0.0"
+APP_VERSION = "4.0.1"
 APP_ORGANIZATION_NAME = "Valdemir "
 OFFICIAL_PROJECT_URL = "https://github.com/Valdemir-DSW/Open-SCOPE"
 
