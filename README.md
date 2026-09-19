@@ -2,9 +2,8 @@
 
 <img width="1365" height="718" alt="image" src="https://github.com/user-attachments/assets/1ac52696-8c3e-489c-bbe4-5b87458853a2" />
 
-<img width="966" height="521" alt="image" src="https://github.com/user-attachments/assets/1feb86d5-3fce-48ce-9bc6-b4ac5a4c9a7a" />
+<img width="336" height="493" alt="image" src="https://github.com/user-attachments/assets/0bd01111-0c59-4e3a-bdd5-a0b9b8b57eb3" />
 
-> https://www.tinkercad.com/things/cp1wpyWjvyx-divisor-bagual-ociloscopio?sharecode=gsAXL6Bi_lhPG0hPAqINLiYtJTcSgbRN_5MzYBt9JDI
 
 <img width="956" height="479" alt="image" src="https://github.com/user-attachments/assets/dd2c0e90-151e-48b1-b58d-207fe7c11684" />
 
